@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  order-db:
+    image: postgres:16
+    container_name: order_service_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: db_orders
+    ports:
+      - "5432:5432" # PC port: DB Port
+    volumes:
+      - order_db_data:/var/lib/postgresql/data
+
+  order-app:
+    build: .
+    container_name: order_service_app
+    ports:
+      - "8080:8080" # Laptopul tău ascultă pe 8080
+    environment:
+      # Conexiunea internă Docker folosește portul 5432 al containerului
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://order-db:5432/db_orders
+      - SPRING_DATASOURCE_USERNAME=admin
+      - SPRING_DATASOURCE_PASSWORD=password
+    depends_on:
+      - order-db
+
+volumes:
+  order_db_data:

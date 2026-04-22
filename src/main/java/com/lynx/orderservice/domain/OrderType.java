@@ -1,4 +1,4 @@
-package com.lynx.orderservice.Domain;
+package com.lynx.orderservice.domain;
 
 public enum OrderType {
     MARKET,
