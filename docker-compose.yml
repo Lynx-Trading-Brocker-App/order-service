@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   order-db:
     image: postgres:16
@@ -9,17 +7,17 @@ services:
       POSTGRES_PASSWORD: password
       POSTGRES_DB: db_orders
     ports:
-      - "5432:5432" # PC port: DB Port
+      - "5433:5432" # Host 5433 -> container 5432 (avoids local postgres on 5432)
     volumes:
       - order_db_data:/var/lib/postgresql/data
 
   order-app:
+    profiles: ["fullstack"]
     build: .
     container_name: order_service_app
     ports:
-      - "8080:8080" # Laptopul tău ascultă pe 8080
+      - "8080:8080"
     environment:
-      # Conexiunea internă Docker folosește portul 5432 al containerului
       - SPRING_DATASOURCE_URL=jdbc:postgresql://order-db:5432/db_orders
       - SPRING_DATASOURCE_USERNAME=admin
       - SPRING_DATASOURCE_PASSWORD=password
