@@ -53,7 +53,7 @@ public class OrderController {
         order.setUpdatedAt(LocalDateTime.now());
         
         Order savedOrder = orderService.createOrder(order);
-        interServiceClient.sendOrderToExchange(savedOrder);
+//        interServiceClient.sendOrderToExchange(savedOrder);
         
         return ResponseEntity.status(HttpStatus.CREATED).body(savedOrder);
     }
