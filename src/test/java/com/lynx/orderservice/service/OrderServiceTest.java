@@ -140,7 +140,7 @@ class OrderServiceTest {
         List<Order> orders = Arrays.asList(testOrder);
         when(orderRepository.findByPlatformId(platformId)).thenReturn(orders);
 
-        List<Order> result = orderService.getOrdersByPlatform(platformId);
+        List<Order> result = orderService.getOrdersByPlatformUser(platformId);
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).getPlatformId()).isEqualTo(platformId);
@@ -151,13 +151,13 @@ class OrderServiceTest {
     @DisplayName("Should find orders by platform and user")
     void testGetOrdersByPlatformUser() {
         List<Order> orders = Arrays.asList(testOrder);
-        when(orderRepository.findByPlatformIdAndPlatformUserId(platformId, platformUserId)).thenReturn(orders);
+        when(orderRepository.findByPlatformUserId(platformUserId)).thenReturn(orders);
 
-        List<Order> result = orderService.getOrdersByPlatformUser(platformId, platformUserId);
+        List<Order> result = orderService.getOrdersByPlatformUser(platformUserId);
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).getPlatformUserId()).isEqualTo(platformUserId);
-        verify(orderRepository, times(1)).findByPlatformIdAndPlatformUserId(platformId, platformUserId);
+        verify(orderRepository, times(1)).findByPlatformUserId(platformUserId);
     }
 
     @Test
@@ -202,7 +202,7 @@ class OrderServiceTest {
     @Test
     @DisplayName("Should find orders by instrument ID and type (for options)")
     void testGetOrdersByInstrumentIdAndTypeOption() {
-        optionOrder = new Order(
+        Order optionOrder = new Order(
                 UUID.randomUUID(),
                 platformId,
                 platformUserId,
