@@ -66,7 +66,7 @@ public class OrderService {
      * Find all orders placed by a specific user on a specific platform.
      */
     @Transactional(readOnly = true)
-    public List<Order> getOrdersByPlatformUser(UUID platformId, UUID platformUserId) {
+    public List<Order> getOrdersByPlatformUser(UUID platformUserId) {
         return orderRepository.findByPlatformUserId(platformUserId);
     }
 
