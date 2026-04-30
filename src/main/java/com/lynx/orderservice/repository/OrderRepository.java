@@ -23,8 +23,8 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     /**
      * Find all orders placed by a specific user on a specific platform.
      */
-    @Query("SELECT o FROM Order o WHERE o.platformId = :platformId AND o.platformUserId = :platformUserId")
-    List<Order> findByPlatformIdAndPlatformUserId(@Param("platformId") UUID platformId, @Param("platformUserId") UUID platformUserId);
+    @Query("SELECT o FROM Order o WHERE o.platformUserId = :platformUserId")
+    List<Order> findByPlatformUserId(@Param("platformUserId") UUID platformUserId);
 
     /**
      * Find all orders for a specific platform user with a given status.

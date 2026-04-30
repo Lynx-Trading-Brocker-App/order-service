@@ -63,19 +63,11 @@ public class OrderService {
     }
 
     /**
-     * Find all orders for a specific platform.
-     */
-    @Transactional(readOnly = true)
-    public List<Order> getOrdersByPlatform(UUID platformId) {
-        return orderRepository.findByPlatformId(platformId);
-    }
-
-    /**
      * Find all orders placed by a specific user on a specific platform.
      */
     @Transactional(readOnly = true)
     public List<Order> getOrdersByPlatformUser(UUID platformId, UUID platformUserId) {
-        return orderRepository.findByPlatformIdAndPlatformUserId(platformId, platformUserId);
+        return orderRepository.findByPlatformUserId(platformUserId);
     }
 
     /**
