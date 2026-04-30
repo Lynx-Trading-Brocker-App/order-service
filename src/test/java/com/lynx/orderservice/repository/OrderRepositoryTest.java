@@ -107,7 +107,7 @@ class OrderRepositoryTest {
         orderRepository.save(stockOrder);
         orderRepository.save(optionOrder);
 
-        List<Order> orders = orderRepository.findByPlatformIdAndPlatformUserId(platformId, platformUserId);
+        List<Order> orders = orderRepository.findByPlatformUserId(platformUserId);
 
         assertThat(orders).hasSize(2);
         assertThat(orders).allMatch(o -> o.getPlatformId().equals(platformId) && o.getPlatformUserId().equals(platformUserId));

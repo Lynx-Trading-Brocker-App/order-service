@@ -81,8 +81,7 @@ public class OrderController {
      */
     @GetMapping("/user/{userId}")
     public ResponseEntity<List<Order>> getUserOrders(@PathVariable UUID userId) {
-        UUID platformId = UUID.fromString("PLATFORM_ID"); // replace this. idk if this should be done automatically. I hope not
-        List<Order> orders = orderService.getOrdersByPlatformUser(platformId, userId);
+        List<Order> orders = orderService.getOrdersByPlatformUser(userId);
         return ResponseEntity.ok(orders);
     }
 
