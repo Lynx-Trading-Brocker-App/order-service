@@ -2,16 +2,21 @@ package com.lynx.orderservice.controller;
 
 import com.lynx.orderservice.client.InterServiceClient;
 import com.lynx.orderservice.domain.Order;
+import com.lynx.orderservice.domain.Side;
 import com.lynx.orderservice.domain.Status;
 import com.lynx.orderservice.domain.Trade;
-import com.lynx.orderservice.dto.OrderStatusUpdateDto;
+import com.lynx.orderservice.dto.*;
 import com.lynx.orderservice.service.OrderService;
 import com.lynx.orderservice.service.TradeService;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -27,6 +32,7 @@ public class OrderController {
     private final OrderService orderService;
     private final TradeService tradeService;
     private final InterServiceClient interServiceClient;
+    private final RestTemplate restTemplate;
 
     /**
      * Constructs the OrderController with necessary services and clients.
@@ -34,11 +40,13 @@ public class OrderController {
      * @param orderService       The service for managing Order entities.
      * @param tradeService       The service for managing Trade entities.
      * @param interServiceClient The client for communicating with external services.
+     * @param restTemplate       The RestTemplate for HTTP requests.
      */
-    public OrderController(OrderService orderService, TradeService tradeService, InterServiceClient interServiceClient) {
+    public OrderController(OrderService orderService, TradeService tradeService, InterServiceClient interServiceClient, RestTemplate restTemplate) {
         this.orderService = orderService;
         this.tradeService = tradeService;
         this.interServiceClient = interServiceClient;
+        this.restTemplate = restTemplate;
     }
 
     /**
@@ -49,10 +57,59 @@ public class OrderController {
      */
     @PostMapping
     public ResponseEntity<Order> placeOrder(@RequestBody Order order) {
+        if (order.getSide() == Side.BUY) {
+            try {
+                ReserveFundsRequest request = new ReserveFundsRequest();
+                request.setUserId(order.getPlatformUserId());
+                
+                // TODO: in the future the price of the stock will be used from the StockExchange for MARKET orders(it's fetched in the api-gateway)
+                BigDecimal limitPrice = order.getLimitPrice() != null ? order.getLimitPrice() : BigDecimal.ONE;
+                BigDecimal amount = order.getQuantity().multiply(limitPrice);
+                request.setAmount(amount);
+                request.setCurrency("USD");
+                
+                restTemplate.postForObject("http://wallet-service:8082/funds/reserve", request, Void.class);
+            } catch (Exception e) {
+                e.printStackTrace();
+                order.setStatus(Status.REJECTED);
+                order.setUpdatedAt(LocalDateTime.now());
+                Order savedOrder = orderService.createOrder(order);
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(savedOrder);
+            }
+        } else {
+            try {
+                ReserveQuantityRequest request = new ReserveQuantityRequest();
+                request.setUserId(order.getPlatformUserId());
+                request.setInstrumentId(order.getInstrumentId());
+                request.setQuantity(order.getQuantity());
+                
+                restTemplate.postForObject("http://portfolio-service:8084/portfolio/reserve", request, Void.class);
+            } catch (Exception e) {
+                e.printStackTrace();
+                order.setStatus(Status.REJECTED);
+                order.setUpdatedAt(LocalDateTime.now());
+                Order savedOrder = orderService.createOrder(order);
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(savedOrder);
+            }
+        }
+
         order.setStatus(Status.PENDING);
         order.setUpdatedAt(LocalDateTime.now());
         
         Order savedOrder = orderService.createOrder(order);
+        
+        // TODO: remove this when stock exchange is done. this is only for testing
+        BigDecimal executionPrice = order.getLimitPrice() != null ? order.getLimitPrice() : BigDecimal.ONE;
+        OrderStatusUpdateDto mockUpdate = new OrderStatusUpdateDto(
+                Status.FILLED, 
+                order.getQuantity(), 
+                executionPrice, 
+                order.getQuantity(), 
+                executionPrice, 
+                BigDecimal.ZERO
+        );
+        this.updateOrderStatus(savedOrder.getOrderId(), mockUpdate);
+
 //        interServiceClient.sendOrderToExchange(savedOrder);
         
         return ResponseEntity.status(HttpStatus.CREATED).body(savedOrder);
@@ -101,7 +158,32 @@ public class OrderController {
         order.setUpdatedAt(LocalDateTime.now());
         orderService.updateOrder(order);
         
-        interServiceClient.cancelOrderAtExchange(orderId);
+        //interServiceClient.cancelOrderAtExchange(orderId);
+        
+        if (order.getSide() == Side.BUY) {
+            try {
+                ReleaseFundsRequest releaseFundsRequest = new ReleaseFundsRequest();
+                releaseFundsRequest.setUserId(order.getPlatformUserId());
+                BigDecimal limitPrice = order.getLimitPrice() != null ? order.getLimitPrice() : BigDecimal.ONE;
+                BigDecimal amount = order.getQuantity().multiply(limitPrice);
+                releaseFundsRequest.setAmount(amount);
+                releaseFundsRequest.setCurrency("USD");
+                restTemplate.postForObject("http://wallet-service:8082/funds/release", releaseFundsRequest, Void.class);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        } else {
+            try {
+                // Assuming release quantity request has similar structure
+                ReserveQuantityRequest releaseQuantityRequest = new ReserveQuantityRequest();
+                releaseQuantityRequest.setUserId(order.getPlatformUserId());
+                releaseQuantityRequest.setInstrumentId(order.getInstrumentId());
+                releaseQuantityRequest.setQuantity(order.getQuantity());
+                restTemplate.postForObject("http://portfolio-service:8084/portfolio/release", releaseQuantityRequest, Void.class);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
         
         return ResponseEntity.noContent().build();
     }
@@ -147,9 +229,83 @@ public class OrderController {
             
             Trade savedTrade = tradeService.createTrade(trade);
             
-            interServiceClient.notifyFeeService(savedTrade);
-            interServiceClient.notifyPortfolioService(savedTrade);
-            interServiceClient.notifyWalletService(savedTrade);
+            if (order.getSide() == Side.BUY) {
+                try {
+                    CaptureFundsRequest captureFundsRequest = new CaptureFundsRequest();
+                    captureFundsRequest.setUserId(order.getPlatformUserId());
+                    BigDecimal limitPrice = order.getLimitPrice() != null ? order.getLimitPrice() : BigDecimal.ONE;
+                    BigDecimal reservedAmount = updateDto.executionQuantity().multiply(limitPrice);
+                    captureFundsRequest.setReservedAmount(reservedAmount);
+                    BigDecimal actualCost = updateDto.executionQuantity().multiply(updateDto.executionPrice());
+                    captureFundsRequest.setActualCost(actualCost);
+                    captureFundsRequest.setCurrency("USD");
+                    restTemplate.postForObject("http://wallet-service:8082/funds/capture", captureFundsRequest, Void.class);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+                try {
+                    AddPositionRequest positionRequest = new AddPositionRequest();
+                    positionRequest.setUserId(order.getPlatformUserId());
+                    positionRequest.setInstrumentId(order.getInstrumentId());
+                    positionRequest.setInstrumentType(order.getInstrumentType().name());
+                    positionRequest.setQuantity(updateDto.executionQuantity());
+                    positionRequest.setPrice(updateDto.executionPrice());
+                    System.out.println("Order-service sent an order with price=" + positionRequest.getPrice());
+                    restTemplate.postForObject("http://portfolio-service:8084/portfolio/add", positionRequest, Void.class);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            } else {
+                try {
+                    CaptureQuantityRequest captureQuantityRequest = new CaptureQuantityRequest();
+                    captureQuantityRequest.setUserId(order.getPlatformUserId());
+                    captureQuantityRequest.setInstrumentId(order.getInstrumentId());
+                    captureQuantityRequest.setQuantity(updateDto.executionQuantity());
+                    restTemplate.postForObject("http://portfolio-service:8084/portfolio/capture", captureQuantityRequest, Void.class);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+                try {
+                    DepositRequest depositRequest = new DepositRequest();
+                    BigDecimal depositAmount = updateDto.executionQuantity().multiply(updateDto.executionPrice());
+                    depositRequest.setAmount(depositAmount);
+                    depositRequest.setCurrency("USD");
+                    
+                    HttpHeaders headers = new HttpHeaders();
+                    headers.set("X-User-Id", order.getPlatformUserId().toString());
+                    HttpEntity<DepositRequest> entity = new HttpEntity<>(depositRequest, headers);
+                    
+                    restTemplate.postForObject("http://wallet-service:8082/funds/deposit", entity, Void.class);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        } else if (updateDto.status() == Status.CANCELLED || updateDto.status() == Status.REJECTED || updateDto.status() == Status.EXPIRED) {
+            if (order.getSide() == Side.BUY) {
+                try {
+                    ReleaseFundsRequest releaseFundsRequest = new ReleaseFundsRequest();
+                    releaseFundsRequest.setUserId(order.getPlatformUserId());
+                    BigDecimal limitPrice = order.getLimitPrice() != null ? order.getLimitPrice() : BigDecimal.ONE;
+                    BigDecimal amount = (order.getQuantity().subtract(order.getFilledQuantity())).multiply(limitPrice);
+                    releaseFundsRequest.setAmount(amount);
+                    releaseFundsRequest.setCurrency("USD");
+                    restTemplate.postForObject("http://wallet-service:8082/funds/release", releaseFundsRequest, Void.class);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            } else {
+                try {
+                    ReserveQuantityRequest releaseQuantityRequest = new ReserveQuantityRequest();
+                    releaseQuantityRequest.setUserId(order.getPlatformUserId());
+                    releaseQuantityRequest.setInstrumentId(order.getInstrumentId());
+                    releaseQuantityRequest.setQuantity(order.getQuantity().subtract(order.getFilledQuantity()));
+                    restTemplate.postForObject("http://portfolio-service:8084/portfolio/release", releaseQuantityRequest, Void.class);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
         }
 
         return ResponseEntity.ok().build();
