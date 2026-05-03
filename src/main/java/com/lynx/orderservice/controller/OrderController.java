@@ -8,6 +8,7 @@ import com.lynx.orderservice.domain.Trade;
 import com.lynx.orderservice.dto.*;
 import com.lynx.orderservice.service.OrderService;
 import com.lynx.orderservice.service.TradeService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -19,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -33,6 +35,15 @@ public class OrderController {
     private final TradeService tradeService;
     private final InterServiceClient interServiceClient;
     private final RestTemplate restTemplate;
+
+    @Value("${internal.api-key}")
+    private String internalApiKey;
+
+    private void validateKey(String key){
+        if (!Objects.equals(internalApiKey, key)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid secret API key");
+        }
+    }
 
     /**
      * Constructs the OrderController with necessary services and clients.
@@ -56,7 +67,10 @@ public class OrderController {
      * @return The created order with its initial status.
      */
     @PostMapping
-    public ResponseEntity<Order> placeOrder(@RequestBody Order order) {
+    public ResponseEntity<Order> placeOrder(
+            @RequestHeader("X-INTERNAL-KEY") String key,
+            @RequestBody Order order) {
+        validateKey(key);
         if (order.getSide() == Side.BUY) {
             try {
                 ReserveFundsRequest request = new ReserveFundsRequest();
@@ -68,7 +82,10 @@ public class OrderController {
                 request.setAmount(amount);
                 request.setCurrency("USD");
                 
-                restTemplate.postForObject("http://wallet-service:8082/funds/reserve", request, Void.class);
+                HttpHeaders headers = new HttpHeaders();
+                headers.set("X-INTERNAL-KEY", internalApiKey);
+                HttpEntity<ReserveFundsRequest> entity = new HttpEntity<>(request, headers);
+                restTemplate.postForObject("http://wallet-service:8082/funds/reserve", entity, Void.class);
             } catch (Exception e) {
                 e.printStackTrace();
                 order.setStatus(Status.REJECTED);
@@ -83,7 +100,10 @@ public class OrderController {
                 request.setInstrumentId(order.getInstrumentId());
                 request.setQuantity(order.getQuantity());
                 
-                restTemplate.postForObject("http://portfolio-service:8084/portfolio/reserve", request, Void.class);
+                HttpHeaders headers = new HttpHeaders();
+                headers.set("X-INTERNAL-KEY", internalApiKey);
+                HttpEntity<ReserveQuantityRequest> entity = new HttpEntity<>(request, headers);
+                restTemplate.postForObject("http://portfolio-service:8084/portfolio/reserve", entity, Void.class);
             } catch (Exception e) {
                 e.printStackTrace();
                 order.setStatus(Status.REJECTED);
@@ -108,7 +128,7 @@ public class OrderController {
                 executionPrice, 
                 BigDecimal.ZERO
         );
-        this.updateOrderStatus(savedOrder.getOrderId(), mockUpdate);
+        this.updateOrderStatus(internalApiKey, savedOrder.getOrderId(), mockUpdate);
 
 //        interServiceClient.sendOrderToExchange(savedOrder);
         
@@ -123,7 +143,11 @@ public class OrderController {
      * @throws ResponseStatusException if the order is not found.
      */
     @GetMapping("/{orderId}")
-    public ResponseEntity<Order> getOrder(@PathVariable UUID orderId) {
+    public ResponseEntity<Order> getOrder(
+            @RequestHeader("X-INTERNAL-KEY") String key,
+            @PathVariable UUID orderId) {
+        validateKey(key);
+
         Order order = orderService.getOrderById(orderId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found"));
                 
@@ -137,7 +161,11 @@ public class OrderController {
      * @return A list of orders belonging to the user.
      */
     @GetMapping("/user/{userId}")
-    public ResponseEntity<List<Order>> getUserOrders(@PathVariable UUID userId) {
+    public ResponseEntity<List<Order>> getUserOrders(
+            @RequestHeader("X-INTERNAL-KEY") String key,
+            @PathVariable UUID userId) {
+        validateKey(key);
+
         List<Order> orders = orderService.getOrdersByPlatformUser(userId);
         return ResponseEntity.ok(orders);
     }
@@ -150,7 +178,10 @@ public class OrderController {
      * @throws ResponseStatusException if the order is not found.
      */
     @DeleteMapping("/{orderId}")
-    public ResponseEntity<Void> cancelOrder(@PathVariable UUID orderId) {
+    public ResponseEntity<Void> cancelOrder(
+            @RequestHeader("X-INTERNAL-KEY") String key,
+            @PathVariable UUID orderId) {
+        validateKey(key);
         Order order = orderService.getOrderById(orderId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found"));
                 
@@ -168,7 +199,11 @@ public class OrderController {
                 BigDecimal amount = order.getQuantity().multiply(limitPrice);
                 releaseFundsRequest.setAmount(amount);
                 releaseFundsRequest.setCurrency("USD");
-                restTemplate.postForObject("http://wallet-service:8082/funds/release", releaseFundsRequest, Void.class);
+
+                HttpHeaders headers = new HttpHeaders();
+                headers.set("X-INTERNAL-KEY", internalApiKey);
+                HttpEntity<ReleaseFundsRequest> entity = new HttpEntity<>(releaseFundsRequest, headers);
+                restTemplate.postForObject("http://wallet-service:8082/funds/release", entity, Void.class);
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -179,7 +214,11 @@ public class OrderController {
                 releaseQuantityRequest.setUserId(order.getPlatformUserId());
                 releaseQuantityRequest.setInstrumentId(order.getInstrumentId());
                 releaseQuantityRequest.setQuantity(order.getQuantity());
-                restTemplate.postForObject("http://portfolio-service:8084/portfolio/release", releaseQuantityRequest, Void.class);
+
+                HttpHeaders headers = new HttpHeaders();
+                headers.set("X-INTERNAL-KEY", internalApiKey);
+                HttpEntity<ReserveQuantityRequest> entity = new HttpEntity<>(releaseQuantityRequest, headers);
+                restTemplate.postForObject("http://portfolio-service:8084/portfolio/release", entity, Void.class);
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -199,9 +238,11 @@ public class OrderController {
      */
     @PutMapping("/{orderId}/status")
     public ResponseEntity<Void> updateOrderStatus(
+            @RequestHeader("X-INTERNAL-KEY") String key,
             @PathVariable UUID orderId,
             @RequestBody OrderStatusUpdateDto updateDto) {
-            
+
+        validateKey(key);
         Order order = orderService.getOrderById(orderId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found"));
 
@@ -239,7 +280,11 @@ public class OrderController {
                     BigDecimal actualCost = updateDto.executionQuantity().multiply(updateDto.executionPrice());
                     captureFundsRequest.setActualCost(actualCost);
                     captureFundsRequest.setCurrency("USD");
-                    restTemplate.postForObject("http://wallet-service:8082/funds/capture", captureFundsRequest, Void.class);
+
+                    HttpHeaders headers = new HttpHeaders();
+                    headers.set("X-INTERNAL-KEY", internalApiKey);
+                    HttpEntity<CaptureFundsRequest> entity = new HttpEntity<>(captureFundsRequest, headers);
+                    restTemplate.postForObject("http://wallet-service:8082/funds/capture", entity, Void.class);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -252,7 +297,11 @@ public class OrderController {
                     positionRequest.setQuantity(updateDto.executionQuantity());
                     positionRequest.setPrice(updateDto.executionPrice());
                     System.out.println("Order-service sent an order with price=" + positionRequest.getPrice());
-                    restTemplate.postForObject("http://portfolio-service:8084/portfolio/add", positionRequest, Void.class);
+
+                    HttpHeaders headers = new HttpHeaders();
+                    headers.set("X-INTERNAL-KEY", internalApiKey);
+                    HttpEntity<AddPositionRequest> entity = new HttpEntity<>(positionRequest, headers);
+                    restTemplate.postForObject("http://portfolio-service:8084/portfolio/add", entity, Void.class);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -262,7 +311,11 @@ public class OrderController {
                     captureQuantityRequest.setUserId(order.getPlatformUserId());
                     captureQuantityRequest.setInstrumentId(order.getInstrumentId());
                     captureQuantityRequest.setQuantity(updateDto.executionQuantity());
-                    restTemplate.postForObject("http://portfolio-service:8084/portfolio/capture", captureQuantityRequest, Void.class);
+
+                    HttpHeaders headers = new HttpHeaders();
+                    headers.set("X-INTERNAL-KEY", internalApiKey);
+                    HttpEntity<CaptureQuantityRequest> entity = new HttpEntity<>(captureQuantityRequest, headers);
+                    restTemplate.postForObject("http://portfolio-service:8084/portfolio/capture", entity, Void.class);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -275,6 +328,7 @@ public class OrderController {
                     
                     HttpHeaders headers = new HttpHeaders();
                     headers.set("X-User-Id", order.getPlatformUserId().toString());
+                    headers.set("X-INTERNAL-KEY", internalApiKey);
                     HttpEntity<DepositRequest> entity = new HttpEntity<>(depositRequest, headers);
                     
                     restTemplate.postForObject("http://wallet-service:8082/funds/deposit", entity, Void.class);
@@ -291,7 +345,11 @@ public class OrderController {
                     BigDecimal amount = (order.getQuantity().subtract(order.getFilledQuantity())).multiply(limitPrice);
                     releaseFundsRequest.setAmount(amount);
                     releaseFundsRequest.setCurrency("USD");
-                    restTemplate.postForObject("http://wallet-service:8082/funds/release", releaseFundsRequest, Void.class);
+
+                    HttpHeaders headers = new HttpHeaders();
+                    headers.set("X-INTERNAL-KEY", internalApiKey);
+                    HttpEntity<ReleaseFundsRequest> entity = new HttpEntity<>(releaseFundsRequest, headers);
+                    restTemplate.postForObject("http://wallet-service:8082/funds/release", entity, Void.class);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -301,7 +359,11 @@ public class OrderController {
                     releaseQuantityRequest.setUserId(order.getPlatformUserId());
                     releaseQuantityRequest.setInstrumentId(order.getInstrumentId());
                     releaseQuantityRequest.setQuantity(order.getQuantity().subtract(order.getFilledQuantity()));
-                    restTemplate.postForObject("http://portfolio-service:8084/portfolio/release", releaseQuantityRequest, Void.class);
+
+                    HttpHeaders headers = new HttpHeaders();
+                    headers.set("X-INTERNAL-KEY", internalApiKey);
+                    HttpEntity<ReserveQuantityRequest> entity = new HttpEntity<>(releaseQuantityRequest, headers);
+                    restTemplate.postForObject("http://portfolio-service:8084/portfolio/release", entity, Void.class);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
