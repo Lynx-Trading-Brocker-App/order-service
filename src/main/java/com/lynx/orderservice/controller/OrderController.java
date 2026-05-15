@@ -9,6 +9,7 @@ import com.lynx.orderservice.domain.Trade;
 import com.lynx.orderservice.dto.*;
 import com.lynx.orderservice.service.OrderService;
 import com.lynx.orderservice.service.TradeService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -28,6 +29,7 @@ import java.util.UUID;
  * REST controller for managing orders and processing status updates.
  * Exposes endpoints for user-facing order operations and system-facing execution updates.
  */
+@Slf4j
 @RestController
 @RequestMapping("/api/orders")
 public class OrderController {
@@ -91,7 +93,7 @@ public class OrderController {
                 HttpEntity<ReserveFundsRequest> entity = new HttpEntity<>(request, headers);
                 restTemplate.postForObject("http://wallet-service:9002/funds/reserve", entity, Void.class);
             } catch (Exception e) {
-                e.printStackTrace();
+                log.error("Failed to reserve funds for BUY order", e);
                 order.setStatus(Status.REJECTED);
                 order.setUpdatedAt(LocalDateTime.now());
                 Order savedOrder = orderService.createOrder(order);
@@ -109,7 +111,7 @@ public class OrderController {
                 HttpEntity<ReserveQuantityRequest> entity = new HttpEntity<>(request, headers);
                 restTemplate.postForObject("http://portfolio-service:9004/portfolio/reserve", entity, Void.class);
             } catch (Exception e) {
-                e.printStackTrace();
+                log.error("Failed to reserve quantity for SELL order", e);
                 order.setStatus(Status.REJECTED);
                 order.setUpdatedAt(LocalDateTime.now());
                 Order savedOrder = orderService.createOrder(order);
@@ -197,7 +199,7 @@ public class OrderController {
                 HttpEntity<ReleaseFundsRequest> entity = new HttpEntity<>(releaseFundsRequest, headers);
                 restTemplate.postForObject("http://wallet-service:9002/funds/release", entity, Void.class);
             } catch (Exception e) {
-                e.printStackTrace();
+                log.error("Failed to release funds for cancelled BUY order", e);
             }
         } else {
             try {
@@ -212,10 +214,10 @@ public class OrderController {
                 HttpEntity<ReserveQuantityRequest> entity = new HttpEntity<>(releaseQuantityRequest, headers);
                 restTemplate.postForObject("http://portfolio-service:9004/portfolio/release", entity, Void.class);
             } catch (Exception e) {
-                e.printStackTrace();
+                log.error("Failed to release quantity for cancelled SELL order", e);
             }
         }
-        
+
         return ResponseEntity.noContent().build();
     }
 
@@ -278,7 +280,7 @@ public class OrderController {
                     HttpEntity<CaptureFundsRequest> entity = new HttpEntity<>(captureFundsRequest, headers);
                     restTemplate.postForObject("http://wallet-service:9002/funds/capture", entity, Void.class);
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    log.error("Failed to capture funds after BUY fill", e);
                 }
 
                 try {
@@ -288,14 +290,14 @@ public class OrderController {
                     positionRequest.setInstrumentType(order.getInstrumentType().name());
                     positionRequest.setQuantity(updateDto.executionQuantity());
                     positionRequest.setPrice(updateDto.executionPrice());
-                    System.out.println("Order-service sent an order with price=" + positionRequest.getPrice());
+                    log.info("Sending add-position request for instrument {} with price={}", positionRequest.getInstrumentId(), positionRequest.getPrice());
 
                     HttpHeaders headers = new HttpHeaders();
                     headers.set("X-INTERNAL-KEY", internalApiKey);
                     HttpEntity<AddPositionRequest> entity = new HttpEntity<>(positionRequest, headers);
                     restTemplate.postForObject("http://portfolio-service:9004/portfolio/add", entity, Void.class);
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    log.error("Failed to add position after BUY fill", e);
                 }
             } else {
                 try {
@@ -309,7 +311,7 @@ public class OrderController {
                     HttpEntity<CaptureQuantityRequest> entity = new HttpEntity<>(captureQuantityRequest, headers);
                     restTemplate.postForObject("http://portfolio-service:9004/portfolio/capture", entity, Void.class);
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    log.error("Failed to capture quantity after SELL fill", e);
                 }
 
                 try {
@@ -325,7 +327,7 @@ public class OrderController {
                     
                     restTemplate.postForObject("http://wallet-service:9002/funds/deposit", entity, Void.class);
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    log.error("Failed to deposit proceeds after SELL fill", e);
                 }
             }
         } else if (updateDto.status() == Status.CANCELLED || updateDto.status() == Status.REJECTED || updateDto.status() == Status.EXPIRED) {
@@ -343,7 +345,7 @@ public class OrderController {
                     HttpEntity<ReleaseFundsRequest> entity = new HttpEntity<>(releaseFundsRequest, headers);
                     restTemplate.postForObject("http://wallet-service:9002/funds/release", entity, Void.class);
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    log.error("Failed to release funds after BUY order terminal status", e);
                 }
             } else {
                 try {
@@ -357,7 +359,7 @@ public class OrderController {
                     HttpEntity<ReserveQuantityRequest> entity = new HttpEntity<>(releaseQuantityRequest, headers);
                     restTemplate.postForObject("http://portfolio-service:9004/portfolio/release", entity, Void.class);
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    log.error("Failed to release quantity after SELL order terminal status", e);
                 }
             }
         }
