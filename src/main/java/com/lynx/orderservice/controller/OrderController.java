@@ -231,7 +231,7 @@ public class OrderController {
      * @throws ResponseStatusException if the order is not found.
      */
     @PutMapping("/{orderId}/status")
-    public ResponseEntity<Void> updateOrderStatus(
+    public ResponseEntity<Order> updateOrderStatus(
             @RequestHeader("X-INTERNAL-KEY") String key,
             @PathVariable UUID orderId,
             @RequestBody OrderStatusUpdateDto updateDto) {
@@ -240,12 +240,19 @@ public class OrderController {
         Order order = orderService.getOrderById(orderId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found"));
 
+        // Compute the incremental fill for this event before overwriting filledQuantity.
+        // The notification service sends filledQuantity as cumulative, so executionQuantity
+        // cannot be trusted — derive the true increment here where we have the previous state.
+        BigDecimal previousFilledQty = order.getFilledQuantity() != null ? order.getFilledQuantity() : BigDecimal.ZERO;
+        BigDecimal newFilledQty = updateDto.filledQuantity() != null ? updateDto.filledQuantity() : BigDecimal.ZERO;
+        BigDecimal incrementalQty = newFilledQty.subtract(previousFilledQty).max(BigDecimal.ZERO);
+
         order.setStatus(updateDto.status());
-        order.setFilledQuantity(updateDto.filledQuantity());
+        order.setFilledQuantity(newFilledQty);
         order.setAverageFillPrice(updateDto.averageFillPrice());
         order.setUpdatedAt(LocalDateTime.now());
-        
-        orderService.updateOrder(order);
+
+        Order updatedOrder = orderService.updateOrder(order);
 
         if (updateDto.status() == Status.FILLED || updateDto.status() == Status.PARTIALLY_FILLED) {
             Trade trade = new Trade(
@@ -256,22 +263,22 @@ public class OrderController {
                     order.getInstrumentType(),
                     order.getInstrumentId(),
                     order.getSide(),
-                    updateDto.executionQuantity(),
+                    incrementalQty,
                     updateDto.executionPrice(),
                     updateDto.exchangeFee(),
                     LocalDateTime.now()
             );
-            
+
             Trade savedTrade = tradeService.createTrade(trade);
-            
+
             if (order.getSide() == Side.BUY) {
                 try {
                     CaptureFundsRequest captureFundsRequest = new CaptureFundsRequest();
                     captureFundsRequest.setUserId(order.getPlatformUserId());
                     BigDecimal limitPrice = order.getLimitPrice() != null ? order.getLimitPrice() : BigDecimal.ONE;
-                    BigDecimal reservedAmount = updateDto.executionQuantity().multiply(limitPrice);
+                    BigDecimal reservedAmount = incrementalQty.multiply(limitPrice);
                     captureFundsRequest.setReservedAmount(reservedAmount);
-                    BigDecimal actualCost = updateDto.executionQuantity().multiply(updateDto.executionPrice());
+                    BigDecimal actualCost = incrementalQty.multiply(updateDto.executionPrice());
                     captureFundsRequest.setActualCost(actualCost);
                     captureFundsRequest.setCurrency("USD");
 
@@ -288,7 +295,7 @@ public class OrderController {
                     positionRequest.setUserId(order.getPlatformUserId());
                     positionRequest.setInstrumentId(order.getInstrumentId());
                     positionRequest.setInstrumentType(order.getInstrumentType().name());
-                    positionRequest.setQuantity(updateDto.executionQuantity());
+                    positionRequest.setQuantity(incrementalQty);
                     positionRequest.setPrice(updateDto.executionPrice());
                     log.info("Sending add-position request for instrument {} with price={}", positionRequest.getInstrumentId(), positionRequest.getPrice());
 
@@ -304,7 +311,7 @@ public class OrderController {
                     CaptureQuantityRequest captureQuantityRequest = new CaptureQuantityRequest();
                     captureQuantityRequest.setUserId(order.getPlatformUserId());
                     captureQuantityRequest.setInstrumentId(order.getInstrumentId());
-                    captureQuantityRequest.setQuantity(updateDto.executionQuantity());
+                    captureQuantityRequest.setQuantity(incrementalQty);
 
                     HttpHeaders headers = new HttpHeaders();
                     headers.set("X-INTERNAL-KEY", internalApiKey);
@@ -316,7 +323,7 @@ public class OrderController {
 
                 try {
                     DepositRequest depositRequest = new DepositRequest();
-                    BigDecimal depositAmount = updateDto.executionQuantity().multiply(updateDto.executionPrice());
+                    BigDecimal depositAmount = incrementalQty.multiply(updateDto.executionPrice());
                     depositRequest.setAmount(depositAmount);
                     depositRequest.setCurrency("USD");
                     
@@ -364,6 +371,6 @@ public class OrderController {
             }
         }
 
-        return ResponseEntity.ok().build();
+        return ResponseEntity.ok(updatedOrder);
     }
 }
